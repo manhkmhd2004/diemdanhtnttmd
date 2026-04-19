@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Quản lý thiếu nhi</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body{font-family:Arial;background:#f5f6fa;padding:15px}
+.container{max-width:900px;margin:auto}
+.topbar{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.btn{padding:6px 10px;border:none;border-radius:6px;color:white;cursor:pointer;font-size:13px}
+.green{background:#4CAF50}
+.blue{background:#2196F3}
+.red{background:red}
+.gray{background:#777}
+.orange{background:orange}
+.search{padding:6px;width:200px}
+
+.card{
+display:grid;
+grid-template-columns: 1fr 60px 180px;
+align-items:center;
+gap:8px;
+background:white;
+padding:8px;
+margin-top:6px;
+border-radius:10px;
+}
+
+.name{font-size:13px}
+.chart{width:55px;height:55px}
+.actions{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
+
+.active{outline:2px solid black}
+.inactive{background:#ccc !important;color:#666}
+
+.overlay{
+display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+background:rgba(0,0,0,0.5);
+justify-content:center;align-items:center
+}
+.form{
+background:white;padding:15px;border-radius:10px;width:320px;position:relative
+}
+.close{position:absolute;top:5px;right:8px;cursor:pointer}
+input{width:100%;margin:5px 0;padding:6px}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<div class="topbar">
+<button class="btn green" onclick="openClass()">Thêm lớp</button>
+<button class="btn blue" onclick="goBack()">Quay lại</button>
+<input class="search" placeholder="Tìm..." oninput="search(this.value)">
+<button class="btn gray" onclick="openSort()">Sắp xếp</button>
+
+<button class="btn green" id="btnStudent" style="display:none;" onclick="openStudent()">Thêm thiếu nhi</button>
+<button class="btn blue" id="btnAttendance" style="display:none;" onclick="openAttendance()">Điểm danh</button>
+<button class="btn blue" id="btnSession" style="display:none;" onclick="openSession()">Thêm buổi học</button>
+<button class="btn green" id="btnAll" style="display:none;" onclick="markAll()">Tất cả có mặt</button>
+</div>
+
+<div id="main"></div>
+</div>
+
+<!-- SORT -->
+<div id="sortBox" class="overlay"><div class="form">
+<span class="close" onclick="closeAll()">X</span>
+<div id="sortContent"></div>
+</div></div>
+
+<!-- CLASS FORM -->
+<div id="classForm" class="overlay"><div class="form">
+<span class="close" onclick="closeAll()">X</span>
+<input id="cname" placeholder="Tên lớp">
+<input id="cteacher" placeholder="Chủ nhiệm">
+<input id="cmanager" placeholder="Người phụ trách">
+<button onclick="saveClass()">Lưu</button>
+</div></div>
+
+<!-- STUDENT FORM -->
+<div id="studentForm" class="overlay"><div class="form">
+<span class="close" onclick="closeAll()">X</span>
+<input id="sname" placeholder="Tên">
+<input type="date" id="dob">
+<input id="parent" placeholder="Phụ huynh">
+<input id="phone" placeholder="SĐT">
+<button onclick="saveStudent()">Lưu</button>
+</div></div>
+
+<!-- SESSION FORM -->
+<div id="sessionForm" class="overlay"><div class="form">
+<span class="close" onclick="closeAll()">X</span>
+<input type="date" id="date">
+<button onclick="saveSession()">Lưu</button>
+</div></div>
+
+<!-- INFO -->
+<div id="infoBox" class="overlay"><div class="form">
+<span class="close" onclick="closeAll()">X</span>
+<div id="infoContent"></div>
+<canvas id="infoChart"></canvas>
+</div></div>
+
+<script>
+let classes=JSON.parse(localStorage.getItem("classes"))||[];
+let currentClass=null,currentSession=null;
+let view="home",searchText="";
+let sortType=null,sortDir=1;
+let editIndex=null,editClassIndex=null;
+
+function save(){localStorage.setItem("classes",JSON.stringify(classes))}
+function closeAll(){document.querySelectorAll(".overlay").forEach(e=>e.style.display="none")}
+function search(v){searchText=v.toLowerCase(); if(view==="home")render(); else renderStudents();}
+
+/* ===== QUAN TRỌNG: ĐIỀU KHIỂN NÚT ===== */
+function updateButtons(){
+  btnStudent.style.display="none";
+  btnAttendance.style.display="none";
+  btnSession.style.display="none";
+  btnAll.style.display="none";
+
+  if(view==="class"){
+    btnStudent.style.display="inline";
+    btnAttendance.style.display="inline";
+  }
+  if(view==="attendance"){
+    btnSession.style.display="inline";
+  }
+  if(view==="detail"){
+    btnAll.style.display="inline";
+  }
+}
+
+/* ===== SORT ===== */
+function openSort(){
+sortContent.innerHTML="";
+if(view==="home"){
+sortContent.innerHTML=`<button onclick="setSort('name')">Tên</button>`;
+}else if(view==="class"){
+sortContent.innerHTML=`
+<button onclick="setSort('name')">Tên</button>
+<button onclick="setSort('dob')">Tuổi</button>
+<button onclick="setSort('percent')">Chuyên cần</button>`;
+}
+sortBox.style.display="flex";
+}
+
+function setSort(type){
+if(sortType===type)sortDir*=-1;
+else{sortType=type;sortDir=1;}
+closeAll();
+if(view==="home")render();
+else renderStudents();
+}
+
+/* ===== NAV ===== */
+function goBack(){
+if(view==="detail")openAttendance();
+else if(view==="attendance")openClassView(currentClass);
+else if(view==="class"){currentClass=null;render();}
+updateButtons();
+}
+
+/* ===== CLASS ===== */
+function openClass(i=null){
+editClassIndex=i;
+if(i!=null){
+let c=classes[i];
+cname.value=c.name;cteacher.value=c.teacher||"";cmanager.value=c.manager||"";
+}
+classForm.style.display="flex";
+}
+
+function saveClass(){
+let data={
+name:cname.value,
+teacher:cteacher.value,
+manager:cmanager.value,
+students:editClassIndex!=null?classes[editClassIndex].students:[],
+sessions:editClassIndex!=null?classes[editClassIndex].sessions:[]
+};
+if(editClassIndex==null)classes.push(data);
+else classes[editClassIndex]=data;
+save();closeAll();render();
+}
+
+function deleteClass(i){
+if(!confirm("Xóa lớp?"))return;
+classes.splice(i,1);save();render();
+}
+
+function viewClass(i){
+let c=classes[i];
+let total=0,ok=0;
+
+c.students.forEach((s,idx)=>{
+c.sessions.forEach(ss=>{
+let st=ss.attendance?.[idx];
+if(st){total++; if(st==="✔")ok++;}
+});
+});
+
+let percent=total?Math.round(ok/total*100):0;
+
+infoContent.innerHTML=`
+<b>${c.name}</b><br>
+CN: ${c.teacher||""}<br>
+PT: ${c.manager||""}<br>
+Sĩ số: ${c.students.length}<br>
+Chuyên cần: ${percent}%`;
+
+infoBox.style.display="flex";
+
+setTimeout(()=>{
+new Chart(infoChart,{
+type:"pie",
+data:{datasets:[{data:[ok,total-ok],
+backgroundColor:["#4CAF50","red"]}]},
+options:{plugins:{legend:{display:false}}}
+});
+},100);
+}
+
+function render(){
+view="home";
+updateButtons();
+
+main.innerHTML="";
+let list=classes.filter(c=>c.name.toLowerCase().includes(searchText));
+if(sortType==="name")list.sort((a,b)=>sortDir*a.name.localeCompare(b.name));
+
+list.forEach((c,i)=>{
+main.innerHTML+=`
+<div class="card">
+<div class="name">
+<b>${c.name}</b><br>CN: ${c.teacher||""}
+</div>
+<div></div>
+<div class="actions">
+<button onclick="viewClass(${i})">Xem</button>
+<button onclick="openClass(${i})">Sửa</button>
+<button onclick="deleteClass(${i})">Xóa</button>
+<button class="btn blue" onclick="openClassView(${i})">Mở</button>
+</div>
+</div>`;
+});
+}
+
+/* ===== STUDENT ===== */
+function openClassView(i){
+view="class";
+currentClass=i;
+updateButtons();
+renderStudents();
+}
+
+function calcStats(i){
+let s={ok:0,abs:0,p:0,m:0,total:0};
+classes[currentClass].sessions.forEach(ss=>{
+let st=ss.attendance?.[i];
+if(st){
+s.total++;
+if(st==="✔")s.ok++;
+if(st==="✖")s.abs++;
+if(st==="P")s.p++;
+if(st==="M")s.m++;
+}
+});
+s.percent=s.total?Math.round(s.ok/s.total*100):0;
+return s;
+}
+
+function renderStudents(){
+main.innerHTML="";
+let list=classes[currentClass].students.map((st,i)=>({
+data:st,index:i,stat:calcStats(i)
+}));
+
+list=list.filter(o=>o.data.name.toLowerCase().includes(searchText));
+
+if(sortType==="name")list.sort((a,b)=>sortDir*a.data.name.localeCompare(b.data.name));
+if(sortType==="dob")list.sort((a,b)=>sortDir*(new Date(a.data.dob)-new Date(b.data.dob)));
+if(sortType==="percent")list.sort((a,b)=>sortDir*(b.stat.percent-a.stat.percent));
+
+list.forEach(obj=>{
+let st=obj.data,i=obj.index,s=obj.stat;
+
+main.innerHTML+=`
+<div class="card">
+<div class="name">
+<b>${st.name}</b><br>
+✔ ${s.ok} | ✖ ${s.abs} | P ${s.p} | M ${s.m}<br>
+${s.percent}%
+</div>
+
+<canvas id="chart${i}" class="chart"></canvas>
+
+<div class="actions">
+<button onclick="viewStudent(${i})">Xem</button>
+<button onclick="editStudent(${i})">Sửa</button>
+<button onclick="deleteStudent(${i})">Xóa</button>
+</div>
+</div>`;
+
+setTimeout(()=>{
+new Chart(document.getElementById("chart"+i),{
+type:"pie",
+data:{datasets:[{data:[s.ok,s.total-s.ok],
+backgroundColor:["#4CAF50","red"]}]},
+options:{responsive:false,plugins:{legend:{display:false}}}
+});
+},0);
+});
+}
+
+/* ===== ATTENDANCE ===== */
+function openAttendance(){
+view="attendance";
+updateButtons();
+renderSessions();
+}
+
+function renderSessions(){
+main.innerHTML="";
+classes[currentClass].sessions.forEach((s,i)=>{
+main.innerHTML+=`
+<div class="card">
+<div class="name">Buổi ${i+1} - ${s.date}</div>
+<div></div>
+<div class="actions">
+<button onclick="openSessionDetail(${i})">Vào</button>
+</div>
+</div>`;
+});
+}
+
+function openSession(){sessionForm.style.display="flex"}
+
+function saveSession(){
+classes[currentClass].sessions.push({date:date.value,attendance:{}});
+save();closeAll();openAttendance();
+}
+
+function openSessionDetail(i){
+view="detail";
+currentSession=i;
+updateButtons();
+
+main.innerHTML="";
+classes[currentClass].students.forEach((s,idx)=>{
+let st=classes[currentClass].sessions[i].attendance[idx]||"";
+
+function cls(v){
+if(st===v)return "active";
+if(st==="")return "";
+return "inactive";
+}
+
+main.innerHTML+=`
+<div class="card">
+<div class="name">${s.name}</div>
+<div></div>
+<div class="actions">
+<button class="green ${cls('✔')}" onclick="mark(${idx},'✔')">✔</button>
+<button class="red ${cls('✖')}" onclick="mark(${idx},'✖')">✖</button>
+<button class="blue ${cls('P')}" onclick="mark(${idx},'P')">P</button>
+<button class="orange ${cls('M')}" onclick="mark(${idx},'M')">M</button>
+</div>
+</div>`;
+});
+}
+
+function mark(i,v){
+classes[currentClass].sessions[currentSession].attendance[i]=v;
+save();
+openSessionDetail(currentSession);
+}
+
+function markAll(){
+classes[currentClass].students.forEach((s,i)=>{
+classes[currentClass].sessions[currentSession].attendance[i]="✔";
+});
+save();
+openSessionDetail(currentSession);
+}
+
+/* ===== STUDENT CRUD ===== */
+function openStudent(){editIndex=null;studentForm.style.display="flex"}
+
+function editStudent(i){
+editIndex=i;
+let s=classes[currentClass].students[i];
+sname.value=s.name;dob.value=s.dob;
+studentForm.style.display="flex";
+}
+
+function saveStudent(){
+let data={name:sname.value,dob:dob.value};
+if(editIndex==null)classes[currentClass].students.push(data);
+else classes[currentClass].students[editIndex]=data;
+save();closeAll();renderStudents();
+}
+
+function deleteStudent(i){
+if(!confirm("Xóa?"))return;
+classes[currentClass].students.splice(i,1);
+save();renderStudents();
+}
+
+function viewStudent(i){
+let s=classes[currentClass].students[i];
+infoContent.innerHTML=`<b>${s.name}</b><br>Sinh: ${s.dob||""}`;
+infoBox.style.display="flex";
+}
+
+render();
+</script>
+</body>
+</html>
